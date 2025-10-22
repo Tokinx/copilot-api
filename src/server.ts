@@ -14,7 +14,11 @@ export const server = new Hono()
 server.use(logger())
 server.use(cors())
 
-server.get("/", (c) => c.text("Server running"))
+// server.get("/", (c) => c.text("Server running"))
+server.get("/", async (c) => {
+  const html = await Bun.file("pages/index.html").text()
+  return c.html(html)
+})
 
 server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
