@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 
+import { apiKeyAuth } from "./lib/api-key-auth"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
@@ -14,16 +15,22 @@ export const server = new Hono()
 server.use(logger())
 server.use(cors())
 
+// Public routes without API key authentication
 // server.get("/", (c) => c.text("Server running"))
 server.get("/", async (c) => {
   const html = await Bun.file("pages/index.html").text()
   return c.html(html)
 })
 
+// Usage endpoint is public
+server.route("/usage", usageRoute)
+
+// Apply API key authentication to all other routes
+server.use("*", apiKeyAuth)
+
 server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
 server.route("/embeddings", embeddingRoutes)
-server.route("/usage", usageRoute)
 server.route("/token", tokenRoute)
 
 // Compatibility with tools that expect v1/ prefix

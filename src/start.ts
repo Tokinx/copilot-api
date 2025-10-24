@@ -21,6 +21,7 @@ interface RunServerOptions {
   rateLimit?: number
   rateLimitWait: boolean
   githubToken?: string
+  apiKey?: string
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
@@ -45,6 +46,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
+  state.apiKey = options.apiKey
+
+  if (options.apiKey) {
+    consola.info("API key authentication enabled")
+  }
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -182,6 +188,12 @@ export const start = defineCommand({
       default: false,
       description: "Initialize proxy from environment variables",
     },
+    "api-key": {
+      alias: "k",
+      type: "string",
+      description:
+        "API key for authentication (supports Authorization: Bearer or X-API-Key header)",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -197,6 +209,7 @@ export const start = defineCommand({
       rateLimit,
       rateLimitWait: args.wait,
       githubToken: args["github-token"],
+      apiKey: args["api-key"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],

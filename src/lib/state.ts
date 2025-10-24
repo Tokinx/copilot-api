@@ -12,6 +12,9 @@ export interface State {
   rateLimitWait: boolean
   showToken: boolean
 
+  // API Key authentication
+  apiKey?: string
+
   // Rate limiting configuration
   rateLimitSeconds?: number
   lastRequestTimestamp?: number
