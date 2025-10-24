@@ -2,6 +2,7 @@ import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
+import { billingCycleManager } from "~/lib/billing-cycle"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
@@ -16,34 +17,43 @@ export const createChatCompletions = async (
       && x.content?.some((x) => x.type === "image_url"),
   )
 
-  // Agent/user check for X-Initiator header
-  // Determine if any message is from an agent ("assistant" or "tool")
-  const isAgentCall = payload.messages.some((msg) =>
-    ["assistant", "tool"].includes(msg.role),
-  )
+  // Determine X-Initiator based on billing cycle
+  const initiator = await billingCycleManager.determineInitiator()
 
   // Build headers and add X-Initiator
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
-    "X-Initiator": isAgentCall ? "agent" : "user",
+    "X-Initiator": initiator,
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  })
+  let response: Response
+  try {
+    response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    })
 
-  if (!response.ok) {
-    consola.error("Failed to create chat completions", response)
-    throw new HTTPError("Failed to create chat completions", response)
+    if (!response.ok) {
+      consola.error("Failed to create chat completions", response)
+      billingCycleManager.markRequestFailed()
+      throw new HTTPError("Failed to create chat completions", response)
+    }
+  } catch (error) {
+    billingCycleManager.markRequestFailed()
+    throw error
   }
 
-  if (payload.stream) {
-    return events(response)
+  // For non-streaming, mark as complete immediately after receiving response
+  if (!payload.stream) {
+    const result = (await response.json()) as ChatCompletionResponse
+    billingCycleManager.markResponseComplete()
+    return result
   }
 
-  return (await response.json()) as ChatCompletionResponse
+  // For streaming, return the event stream
+  // Note: The caller (route handler) must call markResponseComplete() after stream ends
+  return events(response)
 }
 
 // Streaming types

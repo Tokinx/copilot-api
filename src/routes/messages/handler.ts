@@ -4,6 +4,7 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { billingCycleManager } from "~/lib/billing-cycle"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
@@ -62,26 +63,34 @@ export async function handleCompletion(c: Context) {
       toolCalls: {},
     }
 
-    for await (const rawEvent of response) {
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-      if (rawEvent.data === "[DONE]") {
-        break
-      }
+    try {
+      for await (const rawEvent of response) {
+        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
 
-      if (!rawEvent.data) {
-        continue
-      }
+        if (!rawEvent.data) {
+          continue
+        }
 
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        const events = translateChunkToAnthropicEvents(chunk, streamState)
 
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
-        })
+        for (const event of events) {
+          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(event),
+          })
+        }
       }
+      // Mark response complete after all chunks are sent
+      billingCycleManager.markResponseComplete()
+    } catch (error) {
+      // If streaming fails, mark request as failed
+      billingCycleManager.markRequestFailed()
+      throw error
     }
   })
 }
