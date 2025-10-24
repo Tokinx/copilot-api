@@ -6,6 +6,7 @@ import { streamSSE, type SSEMessage } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { billingCycleManager } from "~/lib/billing-cycle"
 import { checkRateLimit } from "~/lib/rate-limit"
+import { createHeartbeatManager } from "~/lib/sse-heartbeat"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { isNullish } from "~/lib/utils"
@@ -16,6 +17,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 export async function handleCompletion(c: Context) {
+  const requestId = crypto.randomUUID()
   await checkRateLimit(state)
 
   let payload = await c.req.json<ChatCompletionsPayload>()
@@ -57,17 +59,31 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
+    const heartbeatManager = createHeartbeatManager(requestId)
+
     try {
+      heartbeatManager.start(stream, () => {
+        consola.warn(`[${requestId}] Force closing connection due to timeout`)
+      })
+
       for await (const chunk of response) {
         consola.debug("Streaming chunk:", JSON.stringify(chunk))
         await stream.writeSSE(chunk as SSEMessage)
       }
       // Mark response complete after all chunks are sent
       billingCycleManager.markResponseComplete()
+
+      const stats = heartbeatManager.getStats()
+      consola.info(
+        `[${requestId}] Stream completed - ${stats.heartbeatCount} heartbeats, ${stats.duration}ms`,
+      )
     } catch (error) {
       // If streaming fails, mark request as failed
       billingCycleManager.markRequestFailed()
+      consola.error(`[${requestId}] Streaming error:`, error)
       throw error
+    } finally {
+      heartbeatManager.stop()
     }
   })
 }

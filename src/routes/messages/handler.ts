@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { billingCycleManager } from "~/lib/billing-cycle"
 import { checkRateLimit } from "~/lib/rate-limit"
+import { createHeartbeatManager } from "~/lib/sse-heartbeat"
 import { state } from "~/lib/state"
 import {
   createChatCompletions,
@@ -24,6 +25,7 @@ import {
 import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 export async function handleCompletion(c: Context) {
+  const requestId = crypto.randomUUID()
   await checkRateLimit(state)
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
@@ -56,6 +58,7 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response from Copilot")
   return streamSSE(c, async (stream) => {
+    const heartbeatManager = createHeartbeatManager(requestId)
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
       contentBlockIndex: 0,
@@ -64,6 +67,10 @@ export async function handleCompletion(c: Context) {
     }
 
     try {
+      heartbeatManager.start(stream, () => {
+        consola.warn(`[${requestId}] Force closing connection due to timeout`)
+      })
+
       for await (const rawEvent of response) {
         consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
         if (rawEvent.data === "[DONE]") {
@@ -87,10 +94,18 @@ export async function handleCompletion(c: Context) {
       }
       // Mark response complete after all chunks are sent
       billingCycleManager.markResponseComplete()
+
+      const stats = heartbeatManager.getStats()
+      consola.info(
+        `[${requestId}] Stream completed - ${stats.heartbeatCount} heartbeats, ${stats.duration}ms`,
+      )
     } catch (error) {
       // If streaming fails, mark request as failed
       billingCycleManager.markRequestFailed()
+      consola.error(`[${requestId}] Streaming error:`, error)
       throw error
+    } finally {
+      heartbeatManager.stop()
     }
   })
 }
