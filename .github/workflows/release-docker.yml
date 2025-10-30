@@ -7,8 +7,9 @@ name: Docker Build and Push
 
 on:
   push:
-    # branches: [ "main" ]
-    # Publish semver tags as releases.
+    # 对任意分支的 push 均触发（包含默认分支）
+    branches: [ '**' ]
+    # 保留：当推送语义化 tag 时也会触发
     tags: [ 'v*.*.*' ]
     paths-ignore:
       - 'docs/**'
@@ -73,6 +74,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
+            # 每次 push 都产出 latest 标签
+            type=raw,value=latest
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
@@ -88,4 +91,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           platforms: linux/amd64,linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
-
